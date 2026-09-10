@@ -1,5 +1,4 @@
 import os
-import html
 import random
 import time
 import sqlite3
@@ -12,7 +11,7 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
 bot = telebot.TeleBot(BOT_TOKEN)
 DB_NAME = "database.db"
 
-GROW_COOLDOWN = 12 * 3600  # 12 ساعت به ثانیه
+GROW_COOLDOWN = 12 * 3600  # 12 hours in seconds
 
 # ==================== DATABASE ====================
 
@@ -92,7 +91,7 @@ active_lucks = {}
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    bot.reply_to(message, "سلام! به ربات خوش آمدید.\n\nدستورات:\n/grow - افزایش امتیاز\n/luck - امتحان شانس برای لغو زمان انتظار\n/fight <مقدار> - نبرد با تاس\n/top - برترین‌ها")
+    bot.reply_to(message, "Welcome!\n\nCommands:\n/grow - Grow your score\n/luck - Try luck to reset cooldown\n/fight <amount> - Dice battle\n/give <amount> - Transfer points\n/top - Leaderboard")
 
 @bot.message_handler(commands=['grow'])
 def grow_cmd(message):
@@ -105,13 +104,13 @@ def grow_cmd(message):
         hours = rem_sec // 3600
         mins = (rem_sec % 3600) // 60
         
-        msg = f"⏳ شما قبلاً رشد کرده‌اید! زمان باقی‌مانده: {hours} ساعت و {mins} دقیقه.\n\n"
+        msg = f"⏳ Cooldown active! Remaining time: {hours}h {mins}m.\n\n"
         if user['can_luck'] == 1:
-            msg += "🎲 **فرصت امتحان شانس:**\nمی‌توانید با دستور /luck شانس خود را امتحان کنید! ۲ بار تاس می‌اندازید؛ اگر مجموع بیشتر از ۸ شد، می‌توانید فوراً دوباره /grow بزنید!"
+            msg += "🎲 You can use /luck to try to remove the cooldown!"
         else:
-            msg += "❌ شما شانس این دوره خود را قبلاً امتحان کرده‌اید."
+            msg += "❌ You already used your luck chance for this round."
         
-        bot.reply_to(message, msg, parse_mode="Markdown")
+        bot.reply_to(message, msg)
         return
 
     delta = random.randint(-2, 10)
@@ -119,9 +118,9 @@ def grow_cmd(message):
     update_user(user['user_id'], height=new_height, last_grow=now, can_luck=1)
 
     if delta >= 0:
-        bot.reply_to(message, f"🌱 امتیاز شما {delta} سانتی‌متر افزایش یافت!\nاندازه فعلی: {new_height} cm")
+        bot.reply_to(message, f"🌱 +{delta} cm! Current size: {new_height} cm")
     else:
-        bot.reply_to(message, f"🥀 متاسفانه {abs(delta)} سانتی‌متر کاهش یافت!\nاندازه فعلی: {new_height} cm")
+        bot.reply_to(message, f"🥀 -{abs(delta)} cm! Current size: {new_height} cm")
 
 @bot.message_handler(commands=['luck', 'chance'])
 def luck_cmd(message):
@@ -130,18 +129,18 @@ def luck_cmd(message):
     diff = now - user['last_grow']
 
     if diff >= GROW_COOLDOWN:
-        bot.reply_to(message, "شما در حال حاضر بدون نیاز به شانس می‌توانید از دستور /grow استفاده کنید!")
+        bot.reply_to(message, "You can already use /grow without luck!")
         return
 
     if user['can_luck'] == 0:
-        bot.reply_to(message, "❌ شما قبلاً شانس خود را برای این دوره ۱۲ ساعته امتحان کرده‌اید.")
+        bot.reply_to(message, "❌ You have already used your luck chance for this period.")
         return
 
     luck_msg = bot.reply_to(
         message,
-        f"🎲 **امتحان شانس برای {user['name']}:**\n\n"
-        f"لطفاً **۲ بار پشت سر هم** روی همین پیام ایموجی تاس (🎲) را ریپلای کنید.\n"
-        f"اگر مجموع ۲ تاس شما **بیشتر از ۸** شد، زمان انتظار شما لغو می‌شود!",
+        f"🎲 **Luck Challenge for {user['name']}:**\n\n"
+        f"Reply to this message with a dice (🎲) **2 times**.\n"
+        f"If the sum is **greater than 8**, your cooldown will be reset!",
         parse_mode="Markdown"
     )
 
@@ -150,40 +149,87 @@ def luck_cmd(message):
         "rolls": []
     }
 
+@bot.message_handler(commands=['give'])
+def give_cmd(message):
+    args = message.text.split()
+    sender = get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+
+    # By reply: /give <amount>
+    if message.reply_to_message:
+        if len(args) < 2 or not args[1].isdigit():
+            bot.reply_to(message, "Usage: Reply to a user with `/give <amount>`")
+            return
+        amount = int(args[1])
+        target_user = message.reply_to_message.from_user
+        receiver = get_user(target_user.id, target_user.username, target_user.first_name)
+    # By username/ID: /give <@username/id> <amount>
+    elif len(args) >= 3 and args[2].isdigit():
+        target = args[1].lstrip('@')
+        amount = int(args[2])
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        if target.isdigit():
+            c.execute("SELECT user_id, username, name, height, last_grow, can_luck FROM users WHERE user_id = ?", (int(target),))
+        else:
+            c.execute("SELECT user_id, username, name, height, last_grow, can_luck FROM users WHERE LOWER(username) = LOWER(?)", (target,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            bot.reply_to(message, "Target user not found.")
+            return
+        receiver = {"user_id": row[0], "username": row[1], "name": row[2], "height": row[3], "last_grow": row[4], "can_luck": row[5]}
+    else:
+        bot.reply_to(message, "Usage:\n- Reply: `/give <amount>`\n- Directly: `/give <@username or ID> <amount>`")
+        return
+
+    if sender['user_id'] == receiver['user_id']:
+        bot.reply_to(message, "You cannot send points to yourself.")
+        return
+    if amount <= 0:
+        bot.reply_to(message, "Amount must be greater than 0.")
+        return
+    if sender['height'] < amount:
+        bot.reply_to(message, "You don't have enough points.")
+        return
+
+    update_user(sender['user_id'], height=sender['height'] - amount)
+    update_user(receiver['user_id'], height=receiver['height'] + amount)
+    bot.reply_to(message, f"🎁 {sender['name']} sent {amount} cm to {receiver['name']}!")
+
 @bot.message_handler(commands=['top'])
 def top_players(message):
     top_list = get_top_users(30)
     if not top_list:
-        bot.reply_to(message, "لیست خالی است.")
+        bot.reply_to(message, "Leaderboard is empty.")
         return
-    lines = [f"{i+1}|{(name or 'User').strip()} — {height} cm" for i, (name, height) in enumerate(top_list)]
+    lines = [f"{i+1}| {(name or 'User').strip()} — {height} cm" for i, (name, height) in enumerate(top_list)]
     bot.reply_to(message, "\n".join(lines))
 
-# ==================== FIGHT / BATTLE LOGIC ====================
+# ==================== BATTLE LOGIC ====================
 
 @bot.message_handler(commands=['fight'])
 def create_fight(message):
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
-        bot.reply_to(message, "نحوه استفاده: /fight <مقدار>")
+        bot.reply_to(message, "Usage: /fight <amount>")
         return
 
     amount = int(args[1])
     if amount <= 0:
-        bot.reply_to(message, "مقدار باید بیشتر از 0 باشد.")
+        bot.reply_to(message, "Amount must be greater than 0.")
         return
 
     user = get_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if user['height'] < amount:
-        bot.reply_to(message, "امتیاز شما برای این شرط‌بندی کافی نیست.")
+        bot.reply_to(message, "You don't have enough points for this bet.")
         return
 
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("⚔️ قبول چالش", callback_data=f"accept_{message.from_user.id}_{amount}"))
+    markup.add(InlineKeyboardButton("⚔️ Accept Challenge", callback_data=f"accept_{message.from_user.id}_{amount}"))
 
     bot.reply_to(
         message,
-        f"🥊 چالش نبرد تاس توسط {user['name']} ایجاد شد!\n💰 مبلغ شرط: {amount} cm\nبرای قبول روی دکمه زیر بزنید:",
+        f"🥊 Dice battle created by {user['name']}!\n💰 Bet: {amount} cm\nClick below to accept:",
         reply_markup=markup
     )
 
@@ -195,24 +241,24 @@ def accept_fight(call):
     joiner_id = call.from_user.id
 
     if joiner_id == creator_id:
-        bot.answer_callback_query(call.id, "نمی‌توانید با خودتان مبارزه کنید!", show_alert=True)
+        bot.answer_callback_query(call.id, "You cannot fight yourself!", show_alert=True)
         return
 
     creator = get_user(creator_id)
     joiner = get_user(joiner_id, call.from_user.username, call.from_user.first_name)
 
     if creator['height'] < amount:
-        bot.answer_callback_query(call.id, "امتیاز سازنده چالش دیگر کافی نیست.", show_alert=True)
+        bot.answer_callback_query(call.id, "Creator no longer has enough points.", show_alert=True)
         return
     if joiner['height'] < amount:
-        bot.answer_callback_query(call.id, "امتیاز شما برای این چالش کافی نیست.", show_alert=True)
+        bot.answer_callback_query(call.id, "You don't have enough points.", show_alert=True)
         return
 
     battle_msg = bot.send_message(
         call.message.chat.id,
-        f"⚔️ نبرد بین {creator['name']} و {joiner['name']} آغاز شد!\n"
-        f"💰 مبلغ شرط: {amount} cm\n\n"
-        f"📌 هر دو بازیکن لطفاً روی همین پیام ایموجی تاس (🎲) ریپلای کنید."
+        f"⚔️ Battle started between {creator['name']} and {joiner['name']}!\n"
+        f"💰 Bet: {amount} cm\n\n"
+        f"📌 Both players must reply to this message with a dice (🎲)."
     )
 
     active_battles[battle_msg.message_id] = {
@@ -223,7 +269,7 @@ def accept_fight(call):
     }
     bot.answer_callback_query(call.id)
 
-# ==================== DICE HANDLER (FIGHT & LUCK) ====================
+# ==================== DICE HANDLER ====================
 
 @bot.message_handler(content_types=['dice'])
 def handle_dice(message):
@@ -232,7 +278,7 @@ def handle_dice(message):
     
     reply_id = message.reply_to_message.message_id
 
-    # 1. پردازش نبرد
+    # 1. Battle handler
     if reply_id in active_battles:
         battle = active_battles[reply_id]
         user_id = message.from_user.id
@@ -241,7 +287,7 @@ def handle_dice(message):
             return
 
         if user_id in battle["rolls"]:
-            bot.reply_to(message, "شما قبلاً تاس انداخته‌اید!")
+            bot.reply_to(message, "You already rolled!")
             return
 
         battle["rolls"][user_id] = message.dice.value
@@ -259,23 +305,23 @@ def handle_dice(message):
             if c_val > j_val:
                 update_user(c_id, height=c_user['height'] + amount)
                 update_user(j_id, height=max(0, j_user['height'] - amount))
-                res = f"🏆 {c_user['name']} با تاس {c_val} در برابر {j_val} برنده شد (+{amount} cm)!"
+                res = f"🏆 {c_user['name']} won with {c_val} vs {j_val} (+{amount} cm)!"
             elif j_val > c_val:
                 update_user(j_id, height=j_user['height'] + amount)
                 update_user(c_id, height=max(0, c_user['height'] - amount))
-                res = f"🏆 {j_user['name']} با تاس {j_val} در برابر {c_val} برنده شد (+{amount} cm)!"
+                res = f"🏆 {j_user['name']} won with {j_val} vs {c_val} (+{amount} cm)!"
             else:
-                res = f"🤝 مساوی شد! ({c_val} - {c_val}) امتیازی کسر نشد."
+                res = f"🤝 Draw! ({c_val} - {c_val}). No points changed."
 
-            bot.send_message(message.chat.id, f"🏁 **پایان نبرد:**\n{res}", parse_mode="Markdown")
+            bot.send_message(message.chat.id, f"🏁 **Battle Ended:**\n{res}", parse_mode="Markdown")
             del active_battles[reply_id]
         return
 
-    # 2. پردازش امتحان شانس
+    # 2. Luck handler
     if reply_id in active_lucks:
         luck = active_lucks[reply_id]
         if message.from_user.id != luck["user_id"]:
-            bot.reply_to(message, "این پیام مربوط به امتحان شانس شخص دیگری است!")
+            bot.reply_to(message, "This luck challenge belongs to someone else!")
             return
 
         luck["rolls"].append(message.dice.value)
@@ -284,7 +330,7 @@ def handle_dice(message):
         if count == 1:
             bot.reply_to(
                 message,
-                f"🎲 تاس اول شما: **{luck['rolls'][0]}**\nحالا تاس دوم را هم روی پیام اصلی ریپلای کنید!",
+                f"🎲 First roll: **{luck['rolls'][0]}**\nNow roll your second dice by replying again!",
                 parse_mode="Markdown"
             )
         elif count == 2:
@@ -295,23 +341,21 @@ def handle_dice(message):
                 update_user(luck["user_id"], last_grow=0, can_luck=0)
                 bot.reply_to(
                     message,
-                    f"🎉 **تبریک!** تاس اول: {val1} | تاس دوم: {val2}\n"
-                    f"مجموع: **{total}** (بیشتر از ۸)\n"
-                    f"محدودیت ۱۲ ساعته شما حذف شد! همین حالا می‌توانید دستور /grow را بزنید!",
+                    f"🎉 **Success!** Rolls: {val1} + {val2} = **{total}** (> 8)\n"
+                    f"Cooldown removed! You can now use /grow.",
                     parse_mode="Markdown"
                 )
             else:
                 update_user(luck["user_id"], can_luck=0)
                 bot.reply_to(
                     message,
-                    f"😢 **متاسفانه نشد!** تاس اول: {val1} | تاس دوم: {val2}\n"
-                    f"مجموع: **{total}** (کمتر یا مساوی ۸)\n"
-                    f"شانس این دوره شما مصرف شد. لطفاً تا پایان زمان انتظار صبر کنید.",
+                    f"😢 **Failed!** Rolls: {val1} + {val2} = **{total}** (<= 8)\n"
+                    f"Your chance is used. Please wait for the cooldown to finish.",
                     parse_mode="Markdown"
                 )
             del active_lucks[reply_id]
 
-# ==================== HEALTH CHECK SERVER ====================
+# ==================== HEALTH CHECK ====================
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
