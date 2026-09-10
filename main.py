@@ -21,12 +21,15 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is active and running!")
 
+    def log_message(self, format, *args):
+        pass
+
 def run_health_server():
     port = int(os.environ.get('PORT', 8080))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# ==================== DATABASE ====================
+# ==================== DATABASE & MIGRATION ====================
 def init_db():
     conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
@@ -40,6 +43,16 @@ def init_db():
             can_luck INTEGER DEFAULT 1,
             PRIMARY KEY (chat_id, user_id)
         )''')
+    
+    # بررسی و اضافه کردن خودکار ستون‌های جدید به دیتابیس قدیمی
+    c.execute("PRAGMA table_info(group_users)")
+    existing_columns = [col[1] for col in c.fetchall()]
+    
+    if "last_grow" not in existing_columns:
+        c.execute("ALTER TABLE group_users ADD COLUMN last_grow REAL DEFAULT 0")
+    if "can_luck" not in existing_columns:
+        c.execute("ALTER TABLE group_users ADD COLUMN can_luck INTEGER DEFAULT 1")
+        
     conn.commit()
     conn.close()
 
@@ -203,6 +216,38 @@ def accept_fight(call):
     parts = call.data.split("_")
     amount = int(parts[1])
     creator_id = int(parts[2])
+    message, "⚠️ Usage: <code>/fight &lt;amount&gt;</code>", parse_mode="HTML")
+        return
+
+    amount = int(args[1])
+    if amount <= 0:
+        bot.reply_to(message, "❌ Bet amount must be greater than zero.")
+        return
+
+    user = get_user(chat_id, message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if user['height'] < amount:
+        bot.reply_to(message, f"❌ You do not have enough points. (Your balance: {user['height']} cm)")
+        return
+
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("⚔️ Accept Challenge", callback_data=f"accept_{amount}_{user['user_id']}"))
+
+    safe_name = html.escape(user['name'])
+    bot.reply_to(
+        message,
+        f"🥊 <b>{safe_name}</b> created a duel challenge!\n"
+        f"💰 Bet: <b>{amount} cm</b>\n"
+        f"Click below to accept:",
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("accept_"))
+def accept_fight(call):
+    chat_id = call.message.chat.id
+    parts = call.data.split("_")
+    amount = int(parts[1])
+    creator_id = int(parts[2])
     joiner_id = call.from_user.id
 
     if joiner_id == creator_id:
@@ -210,41 +255,7 @@ def accept_fight(call):
         return
 
     creator = get_user(chat_id, creator_id)
-    joiner = get_user(chat_id, joiner_id, call.from_user.username, call.from_user.first_name)
-
-    if creator['height'] < amount:
-        bot.answer_callback_query(call.id, "The host no longer has enough points!", show_alert=True)
-        return
-
-    if joiner['height'] < amount:
-        bot.answer_callback_query(call.id, f"You don't have enough points! (Balance: {joiner['height']})", show_alert=True)
-        return
-
-    bot.answer_callback_query(call.id, "Challenge accepted!")
-    try:
-        bot.edit_message_reply_markup(chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
-    except Exception:
-        pass
-
-    creator_name = html.escape(creator['name'])
-    joiner_name = html.escape(joiner['name'])
-
-    battle_msg = bot.send_message(
-        chat_id,
-        f"⚔️ <b>Battle started!</b>\n"
-        f"👤 {creator_name} vs {joiner_name}\n"
-        f"💰 Bet: <b>{amount} cm</b>\n\n"
-        f"👉 Both players must reply to this message with a dice emoji (🎲)!",
-        parse_mode="HTML"
-    )
-
-    active_battles[battle_msg.message_id] = {
-        "chat_id": chat_id,
-        "creator_id": creator_id,
-        "joiner_id": joiner_id,
-        "creator_name": creator['name'],
-        "joiner_name": joiner['name'],
-        "amount": amount,
+    joiner = get_user(chat_id, joiner_id, call.from_user.username, call.from_user.amount": amount,
         "rolls": {}
     }
 
@@ -373,4 +384,4 @@ def top_cmd(message):
 if __name__ == "__main__":
     init_db()
     threading.Thread(target=run_health_server, daemon=True).start()
-    bot.infinity_polling()
+    bot.infinity_polling(allowed_updates=['message', 'callback_query'])
