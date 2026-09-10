@@ -7,8 +7,7 @@ import telebot
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # ----------------- تنظیمات توکن -----------------
-# خواندن توکن از متغیرهای محیطی با مقدار پیش‌فرض
-BOT_TOKEN = os.environ.get('BOT_TOKEN', 'empty')
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ----------------- دیتابیس (SQLite) -----------------
@@ -37,7 +36,6 @@ def get_user(user_id, first_name="", username=""):
         row = cursor.fetchone()
         
         if row:
-            # بروزرسانی نام و یوزرنیم در صورت تغییر
             cursor.execute("UPDATE users SET first_name = ?, username = ? WHERE user_id = ?", (first_name, username, user_id))
             conn.commit()
             return {"user_id": row[0], "first_name": first_name or row[1], "username": username or row[2], "height": row[3], "last_grow": row[4]}
@@ -75,9 +73,10 @@ active_fights = {}
 
 # ----------------- دستورات ربات -----------------
 
-_text = (
-        "👑 **به ربات بازی خوش آمدید!**\n\n"
-        "_text = (
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    get_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    help_text = (
         "👑 **به ربات بازی خوش آمدید!**\n\n"
         "📜 **دستورات:**\n"
         "🔹 `/grow` - افزایش قد تصادفی (هر ۱۲ ساعت)\n"
@@ -128,7 +127,6 @@ def top_players(message):
 
 @bot.message_handler(commands=['fight'])
 def create_fight(message):
-    # چک کردن ارسال در گروه
     if message.chat.type not in ['group', 'supergroup']:
         bot.reply_to(message, "⚠️ این دستور فقط در گروه‌ها کار می‌کند!")
         return
@@ -148,7 +146,6 @@ def create_fight(message):
         bot.reply_to(message, f"❌ شما قد کافی ندارید! قد شما: {user['height']} سانتی‌متر")
         return
 
-    # ساخت دکمه قبول نبرد
     markup = InlineKeyboardMarkup()
     btn = InlineKeyboardButton(text=f"⚔️ قبول چالش ({amount} cm)", callback_data=f"accept_{message.from_user.id}_{amount}")
     markup.add(btn)
@@ -161,7 +158,6 @@ def create_fight(message):
         parse_mode="HTML"
     )
     
-    # ثبت آیدی پیام چالش برای بررسی در نبرد
     active_fights[msg.message_id] = {
         "p1_id": message.from_user.id,
         "p1_name": safe_name,
@@ -185,7 +181,6 @@ def accept_fight(call):
         bot.answer_callback_query(call.id, f"❌ قد شما کافی نیست! (حداقل {amount} سانتی‌متر نیاز است)", show_alert=True)
         return
 
-    # چک کردن موجودی p1 مجددا
     p1 = get_user(p1_id)
     if p1['height'] < amount:
         bot.answer_callback_query(call.id, "❌ سازنده چالش دیگر قد کافی ندارد!", show_alert=True)
@@ -235,7 +230,6 @@ def handle_dice(message):
         fight["p2_score"] = dice_val
         bot.reply_to(message, f"🎯 تاس {fight['p2_name']}: **{dice_val}**", parse_mode="Markdown")
 
-    # بررسی اتمام پرتاب هر دو تاس
     if fight["p1_score"] is not None and fight["p2_score"] is not None:
         p1_score = fight["p1_score"]
         p2_score = fight["p2_score"]
@@ -248,12 +242,10 @@ def handle_dice(message):
             winner_id, winner_name = fight["p2_id"], fight["p2_name"]
             loser_id, loser_name = fight["p1_id"], fight["p1_name"]
         else:
-            # مساوی
             bot.send_message(message.chat.id, f"🤝 نتیجه مساوی شد ({p1_score} - {p2_score})! هیچ قدی کم یا زیاد نشد.")
             del active_fights[target_msg_id]
             return
 
-        # اعمال تغییرات قد
         update_height(winner_id, amount)
         update_height(loser_id, -amount)
 
