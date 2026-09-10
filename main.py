@@ -23,7 +23,7 @@ def init_db():
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             name TEXT,
-            height INTEGER DEFAULT 10,
+            height INTEGER DEFAULT 0,
             last_grow REAL DEFAULT 0,
             can_luck INTEGER DEFAULT 1
         )
@@ -43,7 +43,7 @@ def get_user(user_id, username=None, name=None):
     if row is None:
         c.execute(
             "INSERT INTO users (user_id, username, name, height, last_grow, can_luck) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, username, name or "User", 10, 0, 1)
+            (user_id, username, name or "User", 0, 0, 1)
         )
         conn.commit()
         c.execute("SELECT user_id, username, name, height, last_grow, can_luck FROM users WHERE user_id = ?", (user_id,))
