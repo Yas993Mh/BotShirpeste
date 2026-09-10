@@ -113,7 +113,7 @@ def grow_cmd(message):
         bot.reply_to(message, msg)
         return
 
-    delta = random.randint(-2, 10)
+    delta = random.randint(-2, 30)
     new_height = max(0, user['height'] + delta)
     update_user(user['user_id'], height=new_height, last_grow=now, can_luck=1)
 
