@@ -16,7 +16,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 DB_NAME = "database.db"
 
 def init_db():
-    """ایجاد جدول کاربران در صورت عدم وجود"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -31,15 +30,11 @@ def init_db():
         conn.commit()
 
 def get_user(user_id, first_name="", username=""):
-    """دریافت اطلاعات کاربر یا ثبت نام جدید"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT user_id, first_name, username, height, last_grow FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
-        
-        # نرمال‌سازی یوزرنیم (حذف @ در صورت وجود)
         clean_username = username.lstrip('@') if username else ""
-        
         if row:
             cursor.execute("UPDATE users SET first_name = ?, username = ? WHERE user_id = ?", (first_name, clean_username, user_id))
             conn.commit()
@@ -50,7 +45,6 @@ def get_user(user_id, first_name="", username=""):
             return {"user_id": user_id, "first_name": first_name, "username": clean_username, "height": 0, "last_grow": 0}
 
 def get_user_by_username(username):
-    """جستجوی کاربر بر اساس یوزرنیم"""
     clean_username = username.lstrip('@').lower()
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
@@ -61,33 +55,30 @@ def get_user_by_username(username):
         return None
 
 def update_height(user_id, amount):
-    """تغییر قد کاربر (افزایش یا کاهش)"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET height = MAX(0, height + ?) WHERE user_id = ?", (amount, user_id))
         conn.commit()
 
 def set_grow_time(user_id, timestamp):
-    """ثبت زمان آخرین رشد"""
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET last_grow = ? WHERE user_id = ?", (timestamp, user_id))
         conn.commit()
 
-def get_top_users(limit=10):
-    """دریافت لیست برترین کاربران"""
+def get_top_users(limit=30):
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT first_name, height FROM users ORDER BY height DESC LIMIT ?", (limit,))
         return cursor.fetchall()
 
-# راه‌اندازی اولیه دیتابیس
 init_db()
 
-# متغیر موقت برای مدیریت درخواست‌های فعال نبرد
-active_fights = {}
+# ----------------- حافظه نبردها -----------------
+# ساختار: { battle_msg_id: { p1_id, p2_id, p1_name, p2_name, amount, p1_dice, p2_dice } }
+active_battles = {}
 
-# ----------------- دستورات ربات -----------------
+# ----------------- دستورات عمومی -----------------
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
@@ -96,10 +87,10 @@ def send_welcome(message):
         "👑 <b>به ربات بازی خوش آمدید!</b>\n\n"
         "📜 <b>راهنمای دستورات:</b>\n"
         "🔹 <code>/grow</code> — افزایش قد تصادفی (هر ۱۲ ساعت)\n"
-        "🔹 <code>/fight &lt;مقدار&gt;</code> — شرط‌بندی و نبرد تاس با دیگران\n"
-        "🔹 <code>/give &lt;آیدی یا یوزرنیم&gt; &lt;مقدار&gt;</code> — هدیه دادن قد به دیگران\n"
-        "🔹 <code>/top</code> — جدول ۱۰ نفر اول بازی\n"
-        "🔹 <code>/myheight</code> — مشاهده قد فعلی شما"
+        "🔹 <code>/fight &lt;مقدار&gt;</code> — شرط‌بندی و مبارزه دستی تاس با ریپلای\n"
+        "🔹 <code>/give &lt;آیدی یا یوزرنیم&gt; &lt;مقدار&gt;</code> — هدیه دادن قد\n"
+        "🔹 <code>/top</code> — رتبه‌بندی برترین‌ها\n"
+        "🔹 <code>/myheight</code> — مشاهده قد فعلی"
     )
     bot.reply_to(message, help_text, parse_mode="HTML")
 
@@ -112,116 +103,75 @@ def check_height(message):
 def grow_cmd(message):
     user = get_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
     now = time.time()
-    cooldown = 12 * 3600  # ۱۲ ساعت
+    cooldown = 12 * 3600
     
     if now - user['last_grow'] < cooldown:
         rem_time = int(cooldown - (now - user['last_grow']))
         hours = rem_time // 3600
         mins = (rem_time % 3600) // 60
-        bot.reply_to(message, f"⏳ شما قبلاً رشد کرده‌اید! لطفاً <b>{hours} ساعت و {mins} دقیقه</b> دیگر دوباره امتحان کنید.", parse_mode="HTML")
+        bot.reply_to(message, f"⏳ شما قبلاً رشد کرده‌اید! لطفاً <b>{hours} ساعت و {mins} دقیقه</b> دیگر امتحان کنید.", parse_mode="HTML")
         return
 
     added = random.randint(1, 30)
     update_height(user['user_id'], added)
     set_grow_time(user['user_id'], now)
     
-    bot.reply_to(message, f"🌱 ماشاالله! قد شما <b>+{added} سانتی‌متر</b> رشد کرد!\n📏 قد فعلی: <b>{user['height'] + added} سانتی‌متر</b>", parse_mode="HTML")
+    bot.reply_to(message, f"🌱 قد شما <b>+{added} سانتی‌متر</b> رشد کرد!\n📏 قد فعلی: <b>{user['height'] + added} سانتی‌متر</b>", parse_mode="HTML")
 
 @bot.message_handler(commands=['top'])
 def top_players(message):
-    top_list = get_top_users(10)
+    top_list = get_top_users(30)
     if not top_list:
-        bot.reply_to(message, "هنوز رکوردی ثبت نشده است.")
+        bot.reply_to(message, "لیست خالی است.")
         return
-    
-    text = "🏆 <b>جدول برترین‌های بازی:</b>\n\n"
-    medals = ["🥇", "🥈", "🥉"] + ["▫️"] * 7
-    for i, (name, height) in enumerate(top_list):
-        safe_name = html.escape(name or "کاربر بی نام")
-        text += f"{medals[i]} {i+1}. {safe_name} ➔ <b>{height} cm</b>\n"
-        
-    bot.reply_to(message, text, parse_mode="HTML")
+    lines = [f"{i+1}|{(name or 'User').strip()} — {height} cm" for i, (name, height) in enumerate(top_list)]
+    bot.reply_to(message, "\n".join(lines))
 
-# ----------------- دستور هدیه دادن امتیاز (/give) -----------------
 @bot.message_handler(commands=['give', 'gift', 'send'])
 def gift_height(message):
     sender = get_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
     args = message.text.split()
     target_user = None
-    amount = 0
 
-    # حالت ۱: دستور به صورت ریپلای ارسال شده باشد -> /give 50
     if message.reply_to_message:
         if len(args) < 2 or not args[1].isdigit():
-            bot.reply_to(message, "❌ لطفاً مقدار را وارد کنید.\nمثال روی ریپلای: <code>/give 20</code>", parse_mode="HTML")
+            bot.reply_to(message, "❌ لطفاً مقدار را وارد کنید. مثال: <code>/give 20</code>", parse_mode="HTML")
             return
         amount = int(args[1])
         target_tg_user = message.reply_to_message.from_user
         if target_tg_user.is_bot:
-            bot.reply_to(message, "❌ نمی‌توانید به ربات امتیاز هدیه دهید!")
+            bot.reply_to(message, "❌ نمی‌توانید به ربات امتیاز دهید!")
             return
         target_user = get_user(target_tg_user.id, target_tg_user.first_name, target_tg_user.username)
-
-    # حالت ۲: مشخص کردن کاربر با آیدی عددی یا یوزرنیم -> /give 123456 50 یا /give @user 50
     else:
         if len(args) < 3:
-            bot.reply_to(
-                message,
-                "❌ <b>فرمت نادرست!</b>\n"
-                "🔹 با آیدی عددی: <code>/give 123456789 20</code>\n"
-                "🔹 با یوزرنیم: <code>/give @username 20</code>\n"
-                "🔹 یا ریپلای روی پیام شخص: <code>/give 20</code>",
-                parse_mode="HTML"
-            )
+            bot.reply_to(message, "❌ <b>فرمت:</b>\n<code>/give @username 20</code>\n<code>/give 123456789 20</code>", parse_mode="HTML")
             return
-
         target_identifier = args[1]
         if not args[2].isdigit():
-            bot.reply_to(message, "❌ مقدار هدیه باید یک عدد صحیح مثبت باشد.", parse_mode="HTML")
+            bot.reply_to(message, "❌ مقدار باید عدد باشد.", parse_mode="HTML")
             return
         amount = int(args[2])
+        target_user = get_user(int(target_identifier)) if target_identifier.isdigit() else get_user_by_username(target_identifier)
 
-        # اگر آیدی عددی وارد شده باشد
-        if target_identifier.isdigit():
-            target_id = int(target_identifier)
-            target_user = get_user(target_id)
-        # اگر با @ یا یوزرنیم وارد شده باشد
-        else:
-            target_user = get_user_by_username(target_identifier)
-            if not target_user:
-                bot.reply_to(message, "❌ کاربری با این نام کاربری در دیتابیس ربات یافت نشد (کاربر باید حداقل یکبار ربات را استارت کرده باشد).", parse_mode="HTML")
-                return
-
-    # اعتبارسنجی‌ها
-    if amount <= 0:
-        bot.reply_to(message, "❌ مقدار هدیه باید بیشتر از صفر باشد.", parse_mode="HTML")
+    if not target_user:
+        bot.reply_to(message, "❌ کاربر مورد نظر یافت نشد.")
         return
 
-    if target_user['user_id'] == sender['user_id']:
-        bot.reply_to(message, "❌ نمی‌توانید به خودتان امتیاز هدیه دهید!", parse_mode="HTML")
+    if amount <= 0 or target_user['user_id'] == sender['user_id']:
+        bot.reply_to(message, "❌ درخواست نامعتبر است.")
         return
 
     if sender['height'] < amount:
-        bot.reply_to(message, f"❌ موجودی قد شما کافی نیست! (قد شما: {sender['height']} cm)", parse_mode="HTML")
+        bot.reply_to(message, f"❌ موجودی قد شما کافی نیست! (قد شما: {sender['height']} cm)")
         return
 
-    # انتقال امتیاز
     update_height(sender['user_id'], -amount)
     update_height(target_user['user_id'], amount)
+    bot.reply_to(message, f"🎁 <b>{amount} cm</b> به {html.escape(target_user['first_name'])} منتقل شد.", parse_mode="HTML")
 
-    sender_name = html.escape(message.from_user.first_name)
-    target_name = html.escape(target_user['first_name'] or str(target_user['user_id']))
+# ----------------- سیستم نبرد دستی با تاس و ریپلای -----------------
 
-    bot.reply_to(
-        message,
-        f"🎁 <b>انتقال موفقیت‌آمیز!</b>\n\n"
-        f"👤 فرستنده: <b>{sender_name}</b>\n"
-        f"🎯 گیرنده: <b>{target_name}</b>\n"
-        f"✨ مقدار: <b>{amount} سانتی‌متر</b>",
-        parse_mode="HTML"
-    )
-
-# ----------------- سیستم مبارزه (/fight) -----------------
 @bot.message_handler(commands=['fight'])
 def create_fight(message):
     if message.chat.type not in ['group', 'supergroup']:
@@ -240,121 +190,164 @@ def create_fight(message):
 
     user = get_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
     if user['height'] < amount:
-        bot.reply_to(message, f"❌ شما قد کافی ندارید! قد شما: {user['height']} سانتی‌متر")
+        bot.reply_to(message, f"❌ شما قد کافی ندارید! (قد فعلی: {user['height']} cm)")
         return
 
     markup = InlineKeyboardMarkup()
-    btn = InlineKeyboardButton(text=f"⚔️ قبول چالش ({amount} cm)", callback_data=f"accept_{message.from_user.id}_{amount}")
-    markup.add(btn)
+    markup.add(InlineKeyboardButton(text=f"⚔️ قبول چالش ({amount} cm)", callback_data=f"accept_{message.from_user.id}_{amount}"))
 
-    safe_name = html.escape(message.from_user.first_name)
-    msg = bot.send_message(
+    bot.send_message(
         message.chat.id,
-        f"🥊 <b>{safe_name}</b> چالش مبارزه با شرط <b>{amount} سانتی‌متر</b> راه انداخت!\nچه کسی جرئت رقابت دارد؟",
+        f"🥊 <b>{html.escape(message.from_user.first_name)}</b> یک نبرد با شرط <b>{amount} سانتی‌متر</b> راه انداخت!\nچه کسی چالش را قبول می‌کند؟",
         reply_markup=markup,
         parse_mode="HTML"
     )
-    
-    active_fights[msg.message_id] = {
-        "p1_id": message.from_user.id,
-        "p1_name": safe_name,
-        "amount": amount,
-        "status": "pending"
-    }
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("accept_"))
 def accept_fight(call):
-    _, p1_id, amount = call.data.split("_")
-    p1_id = int(p1_id)
-    amount = int(amount)
+    _, p1_id_str, amount_str = call.data.split("_")
+    p1_id = int(p1_id_str)
+    amount = int(amount_str)
     p2_id = call.from_user.id
 
     if p2_id == p1_id:
         bot.answer_callback_query(call.id, "❌ نمی‌توانید با خودتان مبارزه کنید!", show_alert=True)
         return
 
-    p2 = get_user(p2_id, call.from_user.first_name, call.from_user.username)
-    if p2['height'] < amount:
-        bot.answer_callback_query(call.id, f"❌ قد شما کافی نیست! (حداقل {amount} سانتی‌متر نیاز است)", show_alert=True)
-        return
-
     p1 = get_user(p1_id)
+    p2 = get_user(p2_id, call.from_user.first_name, call.from_user.username)
+
     if p1['height'] < amount:
-        bot.answer_callback_query(call.id, "❌ سازنده چالش دیگر قد کافی ندارد!", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ ایجادکننده چالش قد کافی ندارد!", show_alert=True)
         return
 
-    msg_id = call.message.message_id
-    if msg_id in active_fights:
-        active_fights[msg_id]["p2_id"] = p2_id
-        active_fights[msg_id]["p2_name"] = html.escape(call.from_user.first_name)
-        active_fights[msg_id]["status"] = "rolling"
-        active_fights[msg_id]["p1_score"] = None
-        active_fights[msg_id]["p2_score"] = None
+    if p2['height'] < amount:
+        bot.answer_callback_query(call.id, f"❌ شما قد کافی ندارید! (نیاز: {amount} cm)", show_alert=True)
+        return
 
-    p1_name = active_fights[msg_id]["p1_name"]
-    p2_name = active_fights[msg_id]["p2_name"]
+    p1_name = html.escape(p1['first_name'] or "بازیکن ۱")
+    p2_name = html.escape(p2['first_name'] or "بازیکن ۲")
 
-    bot.edit_message_text(
+    # ویرایش پیام چالش برای شروع نبرد و حذف دکمه
+    battle_msg = bot.edit_message_text(
         chat_id=call.message.chat.id,
-        message_id=msg_id,
+        message_id=call.message.message_id,
         text=(
-            f"🔥 نبرد بین <b>{p1_name}</b> و <b>{p2_name}</b> با شرط <b>{amount} سانتی‌متر</b> آغاز شد!\n\n"
-            f"🎲 هر دو بازیکن باید ایموجی 🎲 را <b>روی همین پیام ریپلای</b> کنند."
+            f"🔥 <b>نبرد آغاز شد!</b>\n\n"
+            f"👤 {p1_name} 🆚 👤 {p2_name}\n"
+            f"💰 شرط: <b>{amount} سانتی‌متر</b>\n\n"
+            f"📌 <b>هر دو بازیکن باید روی همین پیام ریپلای کرده و یک تاس (🎲) بیندازند!</b>\n"
+            f"▫️ وضعیت تاس {p1_name}: ⏳ منتظر پرتاب\n"
+            f"▫️ وضعیت تاس {p2_name}: ⏳ منتظر پرتاب"
         ),
         parse_mode="HTML"
     )
 
+    # ثبت اطلاعات نبرد
+    active_battles[battle_msg.message_id] = {
+        "chat_id": call.message.chat.id,
+        "p1_id": p1_id,
+        "p2_id": p2_id,
+        "p1_name": p1_name,
+        "p2_name": p2_name,
+        "amount": amount,
+        "p1_dice": None,
+        "p2_dice": None
+    }
+    bot.answer_callback_query(call.id)
+
+# ----------------- هندلر دریافت تاس ریپلای شده -----------------
 @bot.message_handler(content_types=['dice'])
 def handle_dice(message):
-    if not message.reply_to_message:
+    # بررسی اینکه آیا تاس است و آیا روی پیامی ریپلای شده یا خیر
+    if message.dice.emoji != '🎲' or not message.reply_to_message:
         return
 
-    target_msg_id = message.reply_to_message.message_id
-    if target_msg_id not in active_fights:
+    battle_id = message.reply_to_message.message_id
+    if battle_id not in active_battles:
         return
 
-    fight = active_fights[target_msg_id]
-    if fight["status"] != "rolling":
-        return
-
+    battle = active_battles[battle_id]
     sender_id = message.from_user.id
     dice_val = message.dice.value
 
-    if sender_id == fight["p1_id"] and fight["p1_score"] is None:
-        fight["p1_score"] = dice_val
-        bot.reply_to(message, f"🎯 تاس {fight['p1_name']}: <b>{dice_val}</b>", parse_mode="HTML")
-    elif sender_id == fight["p2_id"] and fight["p2_score"] is None:
-        fight["p2_score"] = dice_val
-        bot.reply_to(message, f"🎯 تاس {fight['p2_name']}: <b>{dice_val}</b>", parse_mode="HTML")
-
-    if fight["p1_score"] is not None and fight["p2_score"] is not None:
-        p1_score = fight["p1_score"]
-        p2_score = fight["p2_score"]
-        amount = fight["amount"]
-
-        if p1_score > p2_score:
-            winner_id, winner_name = fight["p1_id"], fight["p1_name"]
-            loser_id, loser_name = fight["p2_id"], fight["p2_name"]
-        elif p2_score > p1_score:
-            winner_id, winner_name = fight["p2_id"], fight["p2_name"]
-            loser_id, loser_name = fight["p1_id"], fight["p1_name"]
-        else:
-            bot.send_message(message.chat.id, f"🤝 نتیجه مساوی شد ({p1_score} - {p2_score})! هیچ قدی کم یا زیاد نشد.")
-            del active_fights[target_msg_id]
+    # آیا ارسال‌کننده بازیکن ۱ است؟
+    if sender_id == battle["p1_id"]:
+        if battle["p1_dice"] is not None:
+            bot.reply_to(message, "⚠️ شما قبلاً تاس انداخته‌اید!")
             return
+        battle["p1_dice"] = dice_val
+    # آیا ارسال‌کننده بازیکن ۲ است؟
+    elif sender_id == battle["p2_id"]:
+        if battle["p2_dice"] is not None:
+            bot.reply_to(message, "⚠️ شما قبلاً تاس انداخته‌اید!")
+            return
+        battle["p2_dice"] = dice_val
+    else:
+        return  # شخصی که در نبرد نیست تاس انداخته
 
-        update_height(winner_id, amount)
-        update_height(loser_id, -amount)
+    # وضعیت‌ها
+    p1_status = f"🎲 {battle['p1_dice']}" if battle['p1_dice'] is not None else "⏳ منتظر پرتاب"
+    p2_status = f"🎲 {battle['p2_dice']}" if battle['p2_dice'] is not None else "⏳ منتظر پرتاب"
 
-        result_text = (
-            f"🏆 <b>{winner_name}</b> با نتیجه ({max(p1_score, p2_score)} به {min(p1_score, p2_score)}) پیروز شد!\n\n"
-            f"➕ <b>+{amount} cm</b> به {winner_name} اضافه شد.\n"
-            f"➖ <b>-{amount} cm</b> از {loser_name} کسر شد."
+    # آپدیت متن پیام نبرد با وضعیت جدید
+    try:
+        bot.edit_message_text(
+            chat_id=battle["chat_id"],
+            message_id=battle_id,
+            text=(
+                f"🔥 <b>نبرد در جریان است!</b>\n\n"
+                f"👤 {battle['p1_name']} 🆚 👤 {battle['p2_name']}\n"
+                f"💰 شرط: <b>{battle['amount']} سانتی‌متر</b>\n\n"
+                f"▫️ وضعیت تاس {battle['p1_name']}: {p1_status}\n"
+                f"▫️ وضعیت تاس {battle['p2_name']}: {p2_status}"
+            ),
+            parse_mode="HTML"
         )
-        bot.send_message(message.chat.id, result_text, parse_mode="HTML")
-        del active_fights[target_msg_id]
+    except Exception:
+        pass
 
-# ----------------- وب‌سرور Health Check (Render) -----------------
+    # بررسی پایان بازی (هر دو نفر تاس انداخته باشند)
+    if battle["p1_dice"] is not None and battle["p2_dice"] is not None:
+        p1_val = battle["p1_dice"]
+        p2_val = battle["p2_dice"]
+        amt = battle["amount"]
+
+        time.sleep(2)  # صبر کوتاه تا انیمیشن تاس تمام شود
+
+        if p1_val > p2_val:
+            update_height(battle["p1_id"], amt)
+            update_height(battle["p2_id"], -amt)
+            res_text = (
+                f"🏆 <b>{battle['p1_name']} پیروز شد!</b>\n\n"
+                f"🎲 {battle['p1_name']}: <b>{p1_val}</b>\n"
+                f"🎲 {battle['p2_name']}: <b>{p2_val}</b>\n\n"
+                f"➕ <b>+{amt} cm</b> به {battle['p1_name']}\n"
+                f"➖ <b>-{amt} cm</b> از {battle['p2_name']}"
+            )
+        elif p2_val > p1_val:
+            update_height(battle["p2_id"], amt)
+            update_height(battle["p1_id"], -amt)
+            res_text = (
+                f"🏆 <b>{battle['p2_name']} پیروز شد!</b>\n\n"
+                f"🎲 {battle['p1_name']}: <b>{p1_val}</b>\n"
+                f"🎲 {battle['p2_name']}: <b>{p2_val}</b>\n\n"
+                f"➕ <b>+{amt} cm</b> به {battle['p2_name']}\n"
+                f"➖ <b>-{amt} cm</b> از {battle['p1_name']}"
+            )
+        else:
+            res_text = (
+                f"🤝 <b>نتیجه مساوی شد!</b>\n\n"
+                f"🎲 {battle['p1_name']}: <b>{p1_val}</b>\n"
+                f"🎲 {battle['p2_name']}: <b>{p2_val}</b>\n\n"
+                f"هیچ قدی کسر یا اضافه نشد."
+            )
+
+        bot.send_message(battle["chat_id"], res_text, reply_to_message_id=battle_id, parse_mode="HTML")
+        # حذف نبرد از حافظه پس از اتمام
+        del active_battles[battle_id]
+
+# ----------------- وب‌سرور برای Render -----------------
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -366,7 +359,7 @@ def run_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# ----------------- اجرای ربات -----------------
+# ----------------- اجرای اصلی -----------------
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     print("Bot is running...")
