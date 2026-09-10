@@ -365,20 +365,22 @@ def top_cmd(message):
     chat_id = message.chat.id
     conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
-    c.execute("SELECT name, height FROM group_users WHERE chat_id = ? ORDER BY height DESC LIMIT 10", (chat_id,))
+    # محدودیت نمایش به 30 نفر اول تغییر کرد
+    c.execute("SELECT name, height FROM group_users WHERE chat_id = ? ORDER BY height DESC LIMIT 30", (chat_id,))
     rows = c.fetchall()
     conn.close()
 
     if not rows:
-        bot.reply_to(message, "No player data in this group yet.")
+        bot.reply_to(message, "هیچ داده‌ای از بازیکنان در این گروه وجود ندارد.")
         return
 
-    medals = ["🥇", "🥈", "🥉"]
-    text = "🏆 <b>Group Leaderboard:</b>\n\n"
+    text = ""
     for i, (name, height) in enumerate(rows, 1):
-        rank_icon = medals[i - 1] if i <= 3 else f"{i}."
+        # جلوگیری از به هم ریختن متن بخاطر کاراکترهای خاص در اسم کاربران
         safe_name = html.escape(name or "User")
-        text += f"{rank_icon} <b>{safe_name}</b>: {height} cm\n"
+        
+        # فرمت خروجی دقیقاً مشابه عکس: رتبه|اسم - امتیاز cm
+        text += f"{i}|{safe_name} - {height} cm\n"
 
     bot.reply_to(message, text, parse_mode="HTML")
 
